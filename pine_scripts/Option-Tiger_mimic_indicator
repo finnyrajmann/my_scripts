@@ -1,0 +1,189 @@
+// =============================================================================
+// Multi-Timeframe Trend Indicator (MTFT)
+// Inspired by OptionTiger MTFT — rebuilt for TradingView / NSE
+// Logic: EMA Slope per timeframe → Green/Red dot grid
+//        Auto-cascades to next 5 higher timeframes from current chart TF
+//        Manual override available for all 5 HTFs
+// =============================================================================
+
+//@version=5
+indicator("MTF Trend Indicator", shorttitle="MTFT", overlay=false, max_bars_back=500)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+// --- EMA Settings ---
+ema_len = input.int(9, title="EMA Length", minval=2, group="EMA Settings")
+slope_lookback = input.int(3, title="Slope Lookback (bars)", minval=1, group="EMA Settings",
+     tooltip="Number of bars to measure EMA slope direction")
+
+// --- Auto vs Manual Timeframe Mode ---
+auto_tf = input.bool(true, title="Auto-Cascade Timeframes", group="Timeframe Settings",
+     tooltip="Automatically selects next 5 higher timeframes based on current chart TF. Disable to set manually.")
+
+// --- Manual Override Timeframes (used when auto_tf = false) ---
+htf1_manual = input.timeframe("D",  title="HTF 1 (lowest)",  group="Manual Timeframes (if Auto OFF)")
+htf2_manual = input.timeframe("W",  title="HTF 2",           group="Manual Timeframes (if Auto OFF)")
+htf3_manual = input.timeframe("M",  title="HTF 3",           group="Manual Timeframes (if Auto OFF)")
+htf4_manual = input.timeframe("3M", title="HTF 4",           group="Manual Timeframes (if Auto OFF)")
+htf5_manual = input.timeframe("12M",title="HTF 5 (highest)", group="Manual Timeframes (if Auto OFF)")
+
+// --- Combined Trend Settings ---
+min_aligned = input.int(4, title="Min TFs aligned for Master Signal", minval=1, maxval=5, group="Signal Settings",
+     tooltip="How many of the 5 HTFs must agree (bullish or bearish) to show the Master dot")
+
+// --- Display ---
+show_htf1 = input.bool(true, title="Show HTF1 row", group="Display")
+show_htf2 = input.bool(true, title="Show HTF2 row", group="Display")
+show_htf3 = input.bool(true, title="Show HTF3 row", group="Display")
+show_htf4 = input.bool(true, title="Show HTF4 row", group="Display")
+show_htf5 = input.bool(true, title="Show HTF5 row", group="Display")
+show_master = input.bool(true, title="Show Master Signal row", group="Display")
+
+// =============================================================================
+// AUTO TIMEFRAME CASCADE LOGIC
+// Maps current chart TF → next 5 higher timeframes
+// =============================================================================
+
+// Returns a timeframe string given the current chart period string
+// Cascade table (chart tf → [htf1, htf2, htf3, htf4, htf5])
+
+get_htf(chart_tf, level) =>
+    // level: 1=lowest HTF above chart, 5=highest
+    tf = ""
+    if chart_tf == "1"        // 1 min
+        tf := level == 1 ? "5"   : level == 2 ? "15"  : level == 3 ? "30"  : level == 4 ? "60"   : "D"
+    else if chart_tf == "2"   // 2 min
+        tf := level == 1 ? "5"   : level == 2 ? "15"  : level == 3 ? "30"  : level == 4 ? "60"   : "D"
+    else if chart_tf == "3"   // 3 min
+        tf := level == 1 ? "10"  : level == 2 ? "15"  : level == 3 ? "30"  : level == 4 ? "60"   : "D"
+    else if chart_tf == "5"   // 5 min
+        tf := level == 1 ? "15"  : level == 2 ? "30"  : level == 3 ? "60"  : level == 4 ? "240"  : "D"
+    else if chart_tf == "10"  // 10 min
+        tf := level == 1 ? "15"  : level == 2 ? "30"  : level == 3 ? "60"  : level == 4 ? "240"  : "D"
+    else if chart_tf == "15"  // 15 min
+        tf := level == 1 ? "30"  : level == 2 ? "60"  : level == 3 ? "240" : level == 4 ? "D"    : "W"
+    else if chart_tf == "20"  // 20 min
+        tf := level == 1 ? "30"  : level == 2 ? "60"  : level == 3 ? "240" : level == 4 ? "D"    : "W"
+    else if chart_tf == "30"  // 30 min
+        tf := level == 1 ? "60"  : level == 2 ? "120" : level == 3 ? "240" : level == 4 ? "D"    : "W"
+    else if chart_tf == "45"  // 45 min
+        tf := level == 1 ? "60"  : level == 2 ? "120" : level == 3 ? "240" : level == 4 ? "D"    : "W"
+    else if chart_tf == "60"  // 1 hour
+        tf := level == 1 ? "120" : level == 2 ? "240" : level == 3 ? "D"   : level == 4 ? "W"    : "M"
+    else if chart_tf == "120" // 2 hour
+        tf := level == 1 ? "240" : level == 2 ? "D"   : level == 3 ? "W"   : level == 4 ? "M"    : "3M"
+    else if chart_tf == "240" // 4 hour
+        tf := level == 1 ? "D"   : level == 2 ? "W"   : level == 3 ? "M"   : level == 4 ? "3M"   : "12M"
+    else if chart_tf == "D"   // Daily
+        tf := level == 1 ? "W"   : level == 2 ? "M"   : level == 3 ? "3M"  : level == 4 ? "6M"   : "12M"
+    else if chart_tf == "W"   // Weekly
+        tf := level == 1 ? "M"   : level == 2 ? "3M"  : level == 3 ? "6M"  : level == 4 ? "12M"  : "12M"
+    else if chart_tf == "M"   // Monthly
+        tf := level == 1 ? "3M"  : level == 2 ? "6M"  : level == 3 ? "12M" : level == 4 ? "12M"  : "12M"
+    else
+        // Default fallback for unknown TFs — use daily cascade
+        tf := level == 1 ? "W"   : level == 2 ? "M"   : level == 3 ? "3M"  : level == 4 ? "6M"   : "12M"
+    tf
+
+// Resolve final timeframes (auto or manual)
+chart_tf = timeframe.period
+
+htf1 = auto_tf ? get_htf(chart_tf, 1) : htf1_manual
+htf2 = auto_tf ? get_htf(chart_tf, 2) : htf2_manual
+htf3 = auto_tf ? get_htf(chart_tf, 3) : htf3_manual
+htf4 = auto_tf ? get_htf(chart_tf, 4) : htf4_manual
+htf5 = auto_tf ? get_htf(chart_tf, 5) : htf5_manual
+
+// =============================================================================
+// EMA SLOPE TREND FUNCTION
+// Returns: 1 = bullish (EMA rising), -1 = bearish (EMA falling), 0 = flat
+// =============================================================================
+
+get_trend(tf) =>
+    ema_val = request.security(syminfo.tickerid, tf, ta.ema(close, ema_len), lookahead=barmerge.lookahead_off)
+    ema_prev = request.security(syminfo.tickerid, tf, ta.ema(close, ema_len)[slope_lookback], lookahead=barmerge.lookahead_off)
+    trend = ema_val > ema_prev ? 1 : ema_val < ema_prev ? -1 : 0
+    trend
+
+// =============================================================================
+// FETCH TREND FOR EACH HTF
+// =============================================================================
+
+trend1 = get_trend(htf1)
+trend2 = get_trend(htf2)
+trend3 = get_trend(htf3)
+trend4 = get_trend(htf4)
+trend5 = get_trend(htf5)
+
+// =============================================================================
+// COMBINED / MASTER TREND
+// Count how many TFs are bullish vs bearish
+// =============================================================================
+
+bull_count = (trend1 == 1 ? 1 : 0) + (trend2 == 1 ? 1 : 0) + (trend3 == 1 ? 1 : 0) + (trend4 == 1 ? 1 : 0) + (trend5 == 1 ? 1 : 0)
+bear_count = (trend1 == -1 ? 1 : 0) + (trend2 == -1 ? 1 : 0) + (trend3 == -1 ? 1 : 0) + (trend4 == -1 ? 1 : 0) + (trend5 == -1 ? 1 : 0)
+
+master_bull = bull_count >= min_aligned
+master_bear = bear_count >= min_aligned
+
+// =============================================================================
+// DOT PLOT POSITIONS
+// Each row sits at a fixed Y level so dots stack like the OptionTiger panel
+// Row 6 = HTF1 (lowest), Row 5 = HTF2 ... Row 1 = HTF5, Row 0 = Master
+// =============================================================================
+
+C_BULL   = color.new(color.lime,  0)
+C_BEAR   = color.new(color.red,   0)
+C_FLAT   = color.new(color.gray,  60)
+C_MASTER_BULL = color.new(color.aqua,   0)
+C_MASTER_BEAR = color.new(color.orange, 0)
+C_MASTER_FLAT = color.new(color.gray,   80)
+
+dot_color(trend) =>
+    trend == 1 ? C_BULL : trend == -1 ? C_BEAR : C_FLAT
+
+// Y positions for each row (just numeric levels in the separate pane)
+Y_HTF1   = 6.0
+Y_HTF2   = 5.0
+Y_HTF3   = 4.0
+Y_HTF4   = 3.0 // was 2.5
+Y_HTF5   = 2.0
+Y_MASTER = 0.5
+
+// Plot each row as a dot (circle shape via plot style cross/circles)
+plot(show_htf1   ? Y_HTF1   : na, title="HTF1",   style=plot.style_circles, linewidth=4, color=dot_color(trend1))
+plot(show_htf2   ? Y_HTF2   : na, title="HTF2",   style=plot.style_circles, linewidth=4, color=dot_color(trend2))
+plot(show_htf3   ? Y_HTF3   : na, title="HTF3",   style=plot.style_circles, linewidth=4, color=dot_color(trend3))
+plot(show_htf4   ? Y_HTF4   : na, title="HTF4",   style=plot.style_circles, linewidth=4, color=dot_color(trend4))
+plot(show_htf5   ? Y_HTF5   : na, title="HTF5",   style=plot.style_circles, linewidth=4, color=dot_color(trend5))
+
+// Master signal row
+master_color = master_bull ? C_MASTER_BULL : master_bear ? C_MASTER_BEAR : C_MASTER_FLAT
+plot(show_master ? Y_MASTER : na, title="Master", style=plot.style_circles, linewidth=6, color=master_color)
+
+// Divider line between HTF dots and master signal
+hline(1.25, "Divider", color=color.new(color.white, 80), linestyle=hline.style_dotted)
+
+// =============================================================================
+// LABELS — show which TF each row represents (only on last bar)
+// =============================================================================
+
+if barstate.islast
+    label.new(bar_index + 2, Y_HTF1,   "HTF1: " + htf1,   style=label.style_label_left, size=size.small, color=color.new(color.black,100), textcolor=color.white)
+    label.new(bar_index + 2, Y_HTF2,   "HTF2: " + htf2,   style=label.style_label_left, size=size.small, color=color.new(color.black,100), textcolor=color.white)
+    label.new(bar_index + 2, Y_HTF3,   "HTF3: " + htf3,   style=label.style_label_left, size=size.small, color=color.new(color.black,100), textcolor=color.white)
+    label.new(bar_index + 2, Y_HTF4,   "HTF4: " + htf4,   style=label.style_label_left, size=size.small, color=color.new(color.black,100), textcolor=color.white)
+    label.new(bar_index + 2, Y_HTF5,   "HTF5: " + htf5,   style=label.style_label_left, size=size.small, color=color.new(color.black,100), textcolor=color.white)
+    label.new(bar_index + 2, Y_MASTER, "Master",           style=label.style_label_left, size=size.small, color=color.new(color.black,100), textcolor=color.aqua)
+
+// =============================================================================
+// ALERTS
+// =============================================================================
+
+alertcondition(master_bull and not master_bull[1], title="Master Bullish Signal",  message="MTFT: All timeframes aligned BULLISH on {{ticker}}")
+alertcondition(master_bear and not master_bear[1], title="Master Bearish Signal",  message="MTFT: All timeframes aligned BEARISH on {{ticker}}")
+alertcondition(trend1 == 1 and trend1[1] != 1,     title="HTF1 turned Bullish",    message="MTFT HTF1 bullish on {{ticker}}")
+alertcondition(trend1 == -1 and trend1[1] != -1,   title="HTF1 turned Bearish",    message="MTFT HTF1 bearish on {{ticker}}")
+

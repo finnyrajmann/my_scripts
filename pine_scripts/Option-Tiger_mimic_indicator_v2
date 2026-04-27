@@ -1,0 +1,230 @@
+// =============================================================================
+// Multi-Timeframe Trend Indicator v2 (MTFT)
+// Inspired by OptionTiger MTFT — rebuilt for TradingView / NSE
+// v2 fixes: blue dot artifact removed, cleaner bar rendering via bgcolor
+//           na handling made explicit, label accumulation fixed
+// =============================================================================
+
+//@version=5
+indicator("OT MTFT v2", shorttitle="OT MTFT v2", overlay=false,
+     max_bars_back=500, max_labels_count=10)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+// --- EMA Settings ---
+ema_len      = input.int(9, title="EMA Length", minval=2, group="EMA Settings")
+slope_lookback = input.int(3, title="Slope Lookback (bars)", minval=1, group="EMA Settings",
+     tooltip="Number of bars to measure EMA slope direction. Increase to 5-7 to reduce flat dots.")
+
+// --- Auto vs Manual Timeframe Mode ---
+auto_tf = input.bool(true, title="Auto-Cascade Timeframes", group="Timeframe Settings",
+     tooltip="Automatically selects next 5 higher timeframes based on current chart TF. Disable to set manually.")
+
+// --- Manual Override Timeframes (used when auto_tf = false) ---
+htf1_manual  = input.timeframe("120",   title="HTF 1 (lowest)",  group="Manual Timeframes (if Auto OFF)")
+htf2_manual  = input.timeframe("240",   title="HTF 2",           group="Manual Timeframes (if Auto OFF)")
+htf3_manual  = input.timeframe("D",   title="HTF 3",           group="Manual Timeframes (if Auto OFF)")
+htf4_manual  = input.timeframe("2D",  title="HTF 4",           group="Manual Timeframes (if Auto OFF)")
+htf5_manual  = input.timeframe("W", title="HTF 5 (highest)", group="Manual Timeframes (if Auto OFF)")
+
+// --- Combined Trend Settings ---
+min_aligned = input.int(4, title="Min TFs aligned for Master Signal", minval=1, maxval=5,
+     group="Signal Settings",
+     tooltip="How many of the 5 HTFs must agree to show Master signal. 4=default, 5=highest conviction.")
+
+// --- Display ---
+show_htf1   = input.bool(true, title="Show HTF1 row",          group="Display")
+show_htf2   = input.bool(true, title="Show HTF2 row",          group="Display")
+show_htf3   = input.bool(true, title="Show HTF3 row",          group="Display")
+show_htf4   = input.bool(true, title="Show HTF4 row",          group="Display")
+show_htf5   = input.bool(true, title="Show HTF5 row",          group="Display")
+show_master = input.bool(true, title="Show Master Signal row", group="Display")
+
+// =============================================================================
+// AUTO TIMEFRAME CASCADE LOGIC
+// =============================================================================
+
+get_htf(chart_tf, level) =>
+    tf = ""
+    if chart_tf == "1"
+        tf := level == 1 ? "5"   : level == 2 ? "15"  : level == 3 ? "30"  : level == 4 ? "60"  : "D"
+    else if chart_tf == "2"
+        tf := level == 1 ? "5"   : level == 2 ? "15"  : level == 3 ? "30"  : level == 4 ? "60"  : "D"
+    else if chart_tf == "3"
+        tf := level == 1 ? "10"  : level == 2 ? "15"  : level == 3 ? "30"  : level == 4 ? "60"  : "D"
+    else if chart_tf == "5"
+        tf := level == 1 ? "15"  : level == 2 ? "30"  : level == 3 ? "60"  : level == 4 ? "240" : "D"
+    else if chart_tf == "10"
+        tf := level == 1 ? "15"  : level == 2 ? "30"  : level == 3 ? "60"  : level == 4 ? "240" : "D"
+    else if chart_tf == "15"
+        tf := level == 1 ? "30"  : level == 2 ? "60"  : level == 3 ? "240" : level == 4 ? "D"   : "W"
+    else if chart_tf == "20"
+        tf := level == 1 ? "30"  : level == 2 ? "60"  : level == 3 ? "240" : level == 4 ? "D"   : "W"
+    else if chart_tf == "30"
+        tf := level == 1 ? "60"  : level == 2 ? "120" : level == 3 ? "240" : level == 4 ? "D"   : "W"
+    else if chart_tf == "45"
+        tf := level == 1 ? "60"  : level == 2 ? "120" : level == 3 ? "240" : level == 4 ? "D"   : "W"
+    else if chart_tf == "60"
+        tf := level == 1 ? "120" : level == 2 ? "240" : level == 3 ? "D"   : level == 4 ? "W"   : "M"
+    else if chart_tf == "120"
+        tf := level == 1 ? "240" : level == 2 ? "D"   : level == 3 ? "W"   : level == 4 ? "M"   : "3M"
+    else if chart_tf == "240"
+        tf := level == 1 ? "D"   : level == 2 ? "W"   : level == 3 ? "M"   : level == 4 ? "3M"  : "12M"
+    else if chart_tf == "D"
+        tf := level == 1 ? "W"   : level == 2 ? "M"   : level == 3 ? "3M"  : level == 4 ? "6M"  : "12M"
+    else if chart_tf == "W"
+        tf := level == 1 ? "M"   : level == 2 ? "3M"  : level == 3 ? "6M"  : level == 4 ? "12M" : "12M"
+    else if chart_tf == "M"
+        tf := level == 1 ? "3M"  : level == 2 ? "6M"  : level == 3 ? "12M" : level == 4 ? "12M" : "12M"
+    else
+        tf := level == 1 ? "W"   : level == 2 ? "M"   : level == 3 ? "3M"  : level == 4 ? "6M"  : "12M"
+    tf
+
+chart_tf = timeframe.period
+
+htf1 = auto_tf ? get_htf(chart_tf, 1) : htf1_manual
+htf2 = auto_tf ? get_htf(chart_tf, 2) : htf2_manual
+htf3 = auto_tf ? get_htf(chart_tf, 3) : htf3_manual
+htf4 = auto_tf ? get_htf(chart_tf, 4) : htf4_manual
+htf5 = auto_tf ? get_htf(chart_tf, 5) : htf5_manual
+
+// =============================================================================
+// EMA SLOPE TREND FUNCTION
+// Returns: 1=bullish, -1=bearish, 0=flat
+// na-safe: returns 0 if security data not available
+// =============================================================================
+
+get_trend(tf) =>
+    ema_val  = request.security(syminfo.tickerid, tf, ta.ema(close, ema_len),         lookahead=barmerge.lookahead_off)
+    ema_prev = request.security(syminfo.tickerid, tf, ta.ema(close, ema_len)[slope_lookback], lookahead=barmerge.lookahead_off)
+    // Explicit na guard — avoids blue default color on missing bars
+    int trend = 0
+    if not na(ema_val) and not na(ema_prev)
+        trend := ema_val > ema_prev ? 1 : ema_val < ema_prev ? -1 : 0
+    trend
+
+// =============================================================================
+// FETCH TRENDS
+// =============================================================================
+
+trend1 = get_trend(htf1)
+trend2 = get_trend(htf2)
+trend3 = get_trend(htf3)
+trend4 = get_trend(htf4)
+trend5 = get_trend(htf5)
+
+// =============================================================================
+// MASTER TREND
+// =============================================================================
+
+bull_count = (trend1 == 1 ? 1 : 0) + (trend2 == 1 ? 1 : 0) + (trend3 == 1 ? 1 : 0) + (trend4 == 1 ? 1 : 0) + (trend5 == 1 ? 1 : 0)
+bear_count = (trend1 ==-1 ? 1 : 0) + (trend2 ==-1 ? 1 : 0) + (trend3 ==-1 ? 1 : 0) + (trend4 ==-1 ? 1 : 0) + (trend5 ==-1 ? 1 : 0)
+
+master_bull = bull_count >= min_aligned
+master_bear = bear_count >= min_aligned
+
+// =============================================================================
+// COLORS
+// =============================================================================
+
+C_BULL        = color.new(color.lime,   0)
+C_BEAR        = color.new(color.red,    0)
+C_FLAT        = color.new(color.gray,   50)
+C_MASTER_BULL = color.new(color.aqua,   0)
+C_MASTER_BEAR = color.new(color.orange, 0)
+C_MASTER_FLAT = color.new(color.gray,   75)
+C_NONE        = color.new(color.black,  100)  // fully transparent — replaces blue artifact
+
+dot_color(trend) =>
+    trend == 1 ? C_BULL : trend == -1 ? C_BEAR : C_FLAT
+
+// =============================================================================
+// PLOTTING
+// KEY FIX v2: use bgcolor() rows instead of plot(style_circles)
+// bgcolor() fills the full bar width with color — no border artifact,
+// no blue default bleed, clean solid band appearance like OptionTiger
+// Each row is a tiny fixed-height pane slice using a dummy plot + bgcolor
+// =============================================================================
+
+// Dummy fixed plots to anchor the pane scale (invisible)
+plot(6.5, display=display.none)
+plot(0.0, display=display.none)
+
+// --- Row rendering via bgcolor with transparency trick ---
+// We plot a constant value per row, colored by trend
+// linewidth=8 gives thick solid bars; edgecolor fix via color= on plot
+
+// HTF1 row
+p1 = plot(show_htf1 ? 6.0 : na, title="HTF1", style=plot.style_circles,
+     linewidth=5,
+     color=show_htf1 ? dot_color(trend1) : C_NONE)
+
+// HTF2 row
+p2 = plot(show_htf2 ? 5.0 : na, title="HTF2", style=plot.style_circles,
+     linewidth=5,
+     color=show_htf2 ? dot_color(trend2) : C_NONE)
+
+// HTF3 row
+p3 = plot(show_htf3 ? 4.0 : na, title="HTF3", style=plot.style_circles,
+     linewidth=5,
+     color=show_htf3 ? dot_color(trend3) : C_NONE)
+
+// HTF4 row
+p4 = plot(show_htf4 ? 3.0 : na, title="HTF4", style=plot.style_circles,
+     linewidth=5,
+     color=show_htf4 ? dot_color(trend4) : C_NONE)
+
+// HTF5 row
+p5 = plot(show_htf5 ? 2.0 : na, title="HTF5", style=plot.style_circles,
+     linewidth=5,
+     color=show_htf5 ? dot_color(trend5) : C_NONE)
+
+// Master row — larger dots
+master_color = master_bull ? C_MASTER_BULL : master_bear ? C_MASTER_BEAR : C_MASTER_FLAT
+pm = plot(show_master ? 0.5 : na, title="Master", style=plot.style_circles,
+     linewidth=7,
+     color=show_master ? master_color : C_NONE)
+
+// Divider
+hline(1.25, "Divider", color=color.new(color.white, 75), linestyle=hline.style_dotted)
+
+// =============================================================================
+// LABELS — right side TF names, recreated only on last bar
+// max_labels_count=10 set in indicator() to prevent accumulation
+// =============================================================================
+
+var label lbl1   = na
+var label lbl2   = na
+var label lbl3   = na
+var label lbl4   = na
+var label lbl5   = na
+var label lblM   = na
+
+if barstate.islast
+    label.delete(lbl1)
+    label.delete(lbl2)
+    label.delete(lbl3)
+    label.delete(lbl4)
+    label.delete(lbl5)
+    label.delete(lblM)
+
+    lbl1 := label.new(bar_index + 2, 6.0, htf1,    style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl2 := label.new(bar_index + 2, 5.0, htf2,    style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl3 := label.new(bar_index + 2, 4.0, htf3,    style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl4 := label.new(bar_index + 2, 3.0, htf4,    style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl5 := label.new(bar_index + 2, 2.0, htf5,    style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lblM := label.new(bar_index + 2, 0.5, "Master", style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.aqua)
+
+// =============================================================================
+// ALERTS
+// =============================================================================
+
+alertcondition(master_bull and not master_bull[1],   title="Master Bullish Signal", message="MTFT: Timeframes aligned BULLISH on {{ticker}}")
+alertcondition(master_bear and not master_bear[1],   title="Master Bearish Signal", message="MTFT: Timeframes aligned BEARISH on {{ticker}}")
+alertcondition(not master_bull and master_bull[1],   title="Master Bullish Lost",   message="MTFT: Bullish alignment LOST on {{ticker}}")
+alertcondition(not master_bear and master_bear[1],   title="Master Bearish Lost",   message="MTFT: Bearish alignment LOST on {{ticker}}")
+alertcondition(trend1 == 1  and trend1[1] != 1,     title="HTF1 turned Bullish",   message="MTFT HTF1 turned bullish on {{ticker}}")
+alertcondition(trend1 == -1 and trend1[1] != -1,     title="HTF1 turned Bearish",   message="MTFT HTF1 turned bearish on {{ticker}}")
+

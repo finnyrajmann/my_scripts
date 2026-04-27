@@ -1,0 +1,117 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © finnyrajmann
+
+//@version=6
+indicator("MTFT ES On-Chart", shorttitle="MTFT ES OC", overlay=true, max_bars_back=500)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+tf1  = input.timeframe("15",  "Timeframe 1 (lowest)")
+tf2  = input.timeframe("30",  "Timeframe 2")
+tf3  = input.timeframe("45",  "Timeframe 3")
+tf4  = input.timeframe("60",  "Timeframe 4")
+tf5  = input.timeframe("120", "Timeframe 5")
+tf6  = input.timeframe("180", "Timeframe 6")
+tf7  = input.timeframe("240", "Timeframe 7")
+tf8  = input.timeframe("D",   "Timeframe 8")
+tf9  = input.timeframe("2D",  "Timeframe 9")
+tf10 = input.timeframe("W",   "Timeframe 10 (highest)")
+
+emaLength      = input.int(9,    "EMA Length",         minval=1,    group="EMA Settings")
+emaSlopeLength = input.int(3,    "EMA Slope Lookback", minval=1,    group="EMA Settings")
+min_slope_pct  = input.float(0.1, "Min Slope %",       minval=0.0, step=0.01, group="EMA Settings")
+
+// =============================================================================
+// TREND FUNCTION
+// =============================================================================
+
+get_trend(tf) =>
+    ema_val  = request.security(syminfo.tickerid, tf, ta.ema(close, emaLength),                lookahead=barmerge.lookahead_off)
+    ema_prev = request.security(syminfo.tickerid, tf, ta.ema(close, emaLength)[emaSlopeLength], lookahead=barmerge.lookahead_off)
+    int trend = 0
+    if not na(ema_val) and not na(ema_prev) and ema_prev != 0
+        slope_pct = (ema_val - ema_prev) / ema_prev * 100
+        trend := slope_pct >  min_slope_pct ? 1 :
+                 slope_pct < -min_slope_pct ? -1 : 0
+    trend
+
+// =============================================================================
+// FETCH
+// =============================================================================
+
+trend1  = get_trend(tf1)
+trend2  = get_trend(tf2)
+trend3  = get_trend(tf3)
+trend4  = get_trend(tf4)
+trend5  = get_trend(tf5)
+trend6  = get_trend(tf6)
+trend7  = get_trend(tf7)
+trend8  = get_trend(tf8)
+trend9  = get_trend(tf9)
+trend10 = get_trend(tf10)
+
+// =============================================================================
+// TIERED MASTER LOGIC
+// =============================================================================
+
+// Tier A — Anchor (Daily/2D/Weekly)
+tierA_bull = (trend8==1  ? 1:0) + (trend9==1  ? 1:0) + (trend10==1  ? 1:0)
+tierA_bear = (trend8==-1 ? 1:0) + (trend9==-1 ? 1:0) + (trend10==-1 ? 1:0)
+
+// Tier B — Bridge (2H/3H/4H)
+tierB_bull = (trend5==1  ? 1:0) + (trend6==1  ? 1:0) + (trend7==1  ? 1:0)
+tierB_bear = (trend5==-1 ? 1:0) + (trend6==-1 ? 1:0) + (trend7==-1 ? 1:0)
+
+// Tier C — Confirm (15m/30m/45m/1H)
+tierC_bull = (trend1==1  ? 1:0) + (trend2==1  ? 1:0) + (trend3==1  ? 1:0) + (trend4==1  ? 1:0)
+
+// ATR volatility gate
+atr14      = ta.atr(14)
+atr_ma     = ta.sma(atr14, 50)
+trend_active = atr14 > atr_ma * 0.8
+
+// Master decisions
+tierA_sustained = tierA_bull >= 2 and tierA_bull[3] >= 2 and tierA_bull[5] >= 2
+master_bull = tierA_sustained and tierB_bull >= 2 and tierC_bull >= 3 and trend_active
+master_bear = tierA_bear >= 2 and tierB_bear >= 2
+
+// =============================================================================
+// SIGNALS — only on state change
+// =============================================================================
+
+buy_signal  = master_bull and not master_bull[1]
+// sell_signal = master_bear and not master_bear[1]
+sell_signal = master_bear and master_bear[1] and not master_bear[2]
+
+// =============================================================================
+// PLOT ON CHART
+// =============================================================================
+
+plotshape(buy_signal,
+     title="Buy Signal",
+     location=location.belowbar,
+     style=shape.triangleup,
+     size=size.normal,
+     color=color.new(color.aqua, 0),
+     text="B",
+     textcolor=color.black)
+
+plotshape(sell_signal,
+     title="Sell Signal",
+     location=location.abovebar,
+     style=shape.triangledown,
+     size=size.normal,
+     color=color.new(color.orange, 0),
+     text="S",
+     textcolor=color.black)
+
+// =============================================================================
+// ALERTS
+// =============================================================================
+
+alertcondition(buy_signal,  title="Buy Signal",  message="MTFT ES: BUY signal on {{ticker}}")
+alertcondition(sell_signal, title="Sell Signal", message="MTFT ES: SELL signal on {{ticker}}")
+
+

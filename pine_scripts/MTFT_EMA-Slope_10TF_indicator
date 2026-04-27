@@ -1,0 +1,153 @@
+//@version=6
+indicator("MTFT ES 10", shorttitle="MTFT ES10", overlay=false, max_bars_back=500, max_labels_count=10)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+tf1 = input.timeframe("15", "Timeframe 1 (lowest)")
+tf2 = input.timeframe("30", "Timeframe 2")
+tf3 = input.timeframe("45",   "Timeframe 3")
+tf4 = input.timeframe("60",  "Timeframe 4")
+tf5 = input.timeframe("120",  "Timeframe 5")
+tf6 = input.timeframe("180",  "Timeframe 6")
+tf7 = input.timeframe("240",  "Timeframe 7")
+tf8 = input.timeframe("D",  "Timeframe 8")
+tf9 = input.timeframe("2D",  "Timeframe 9")
+tf10 = input.timeframe("W",   "Timeframe 10 (highest)")
+
+emaLength      = input.int(9,    "EMA Length",         minval=1,   group="EMA Settings")
+emaSlopeLength = input.int(3,    "EMA Slope Lookback", minval=1,   group="EMA Settings")
+min_slope_pct  = input.float(0.1, "Min Slope %",       minval=0.0, step=0.01, group="EMA Settings",
+     tooltip="Minimum EMA slope as % of price to qualify as bull/bear. Below this = flat/gray. Try 0.05–0.3.")
+
+min_aligned    = input.int(4, "Min TFs for Master", minval=1, maxval=5, group="Signal Settings")
+
+// =============================================================================
+// TREND FUNCTION — 3 states: 1=bull, -1=bear, 0=flat
+// Now includes slope magnitude filter
+// =============================================================================
+
+get_trend(tf) =>
+    ema_val  = request.security(syminfo.tickerid, tf, ta.ema(close, emaLength),                 lookahead=barmerge.lookahead_off)
+    ema_prev = request.security(syminfo.tickerid, tf, ta.ema(close, emaLength)[emaSlopeLength],  lookahead=barmerge.lookahead_off)
+    int trend = 0
+    if not na(ema_val) and not na(ema_prev) and ema_prev != 0
+        slope_pct = (ema_val - ema_prev) / ema_prev * 100
+        trend := slope_pct >  min_slope_pct ? 1 :
+                 slope_pct < -min_slope_pct ? -1 : 0
+    trend
+
+// =============================================================================
+// FETCH
+// =============================================================================
+
+trend1 = get_trend(tf1)
+trend2 = get_trend(tf2)
+trend3 = get_trend(tf3)
+trend4 = get_trend(tf4)
+trend5 = get_trend(tf5)
+trend6 = get_trend(tf6)
+trend7 = get_trend(tf7)
+trend8 = get_trend(tf8)
+trend9 = get_trend(tf9)
+trend10 = get_trend(tf10)
+
+// =============================================================================
+// MASTER
+// =============================================================================
+
+bull_count = (trend1==1?1:0) + (trend2==1?1:0) + (trend3==1?1:0) + (trend4==1?1:0) + (trend5==1?1:0)
+bear_count = (trend1==-1?1:0) + (trend2==-1?1:0) + (trend3==-1?1:0) + (trend4==-1?1:0) + (trend5==-1?1:0)
+
+lower_bull  = (trend1==1?1:0) + (trend2==1?1:0) + (trend3==1?1:0) + (trend4==1?1:0) >= 3
+master_bull = lower_bull and trend5 != -1
+master_bear = bear_count >= min_aligned
+
+// =============================================================================
+// COLORS
+// =============================================================================
+
+C_BULL        = color.new(color.lime,   0)
+C_BEAR        = color.new(color.red,    0)
+C_FLAT        = color.new(color.gray,   50)
+C_MASTER_BULL = color.new(color.aqua,   0)
+C_MASTER_BEAR = color.new(color.orange, 0)
+C_MASTER_FLAT = color.new(color.gray,   75)
+C_NONE        = color.new(color.black,  100)
+
+dot_color(trend) =>
+    trend == 1 ? C_BULL : C_BEAR
+
+// =============================================================================
+// PLOT — lower TF at top, Master at bottom
+// =============================================================================
+
+plot(6.5, display=display.none)
+plot(0.0, display=display.none)
+
+plot(1.0, title="TF1", style=plot.style_circles, linewidth=5, color=dot_color(trend1))
+plot(2.0, title="TF2", style=plot.style_circles, linewidth=5, color=dot_color(trend2))
+plot(3.0, title="TF3", style=plot.style_circles, linewidth=5, color=dot_color(trend3))
+plot(4.0, title="TF4", style=plot.style_circles, linewidth=5, color=dot_color(trend4))
+plot(5.0, title="TF5", style=plot.style_circles, linewidth=5, color=dot_color(trend5))
+plot(6.0, title="TF6", style=plot.style_circles, linewidth=5, color=dot_color(trend6))
+plot(7.0, title="TF7", style=plot.style_circles, linewidth=5, color=dot_color(trend7))
+plot(8.0, title="TF8", style=plot.style_circles, linewidth=5, color=dot_color(trend8))
+plot(9.0, title="TF9", style=plot.style_circles, linewidth=5, color=dot_color(trend9))
+plot(10.0, title="TF10", style=plot.style_circles, linewidth=5, color=dot_color(trend10))
+
+master_color = master_bull ? C_MASTER_BULL : master_bear ? C_MASTER_BEAR : C_MASTER_FLAT
+plot(11.0, title="Master", style=plot.style_circles, linewidth=7, color=master_color)
+
+hline(1.25, "Divider", color=color.new(color.white, 75), linestyle=hline.style_dotted)
+
+// =============================================================================
+// LABELS
+// =============================================================================
+
+var label lbl1 = na
+var label lbl2 = na
+var label lbl3 = na
+var label lbl4 = na
+var label lbl5 = na
+var label lbl6 = na
+var label lbl7 = na
+var label lbl8 = na
+var label lbl9 = na
+var label lbl10 = na
+var label lblM = na
+
+if barstate.islast
+    label.delete(lbl1)
+    label.delete(lbl2)
+    label.delete(lbl3)
+    label.delete(lbl4)
+    label.delete(lbl5)
+    label.delete(lbl6)
+    label.delete(lbl7)
+    label.delete(lbl8)
+    label.delete(lbl9)
+    label.delete(lbl10)
+    label.delete(lblM)
+
+    lbl1 := label.new(bar_index + 2, 1.0, tf1,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl2 := label.new(bar_index + 2, 2.0, tf2,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl3 := label.new(bar_index + 2, 3.0, tf3,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl4 := label.new(bar_index + 2, 4.0, tf4,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl5 := label.new(bar_index + 2, 5.0, tf5,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl6 := label.new(bar_index + 2, 6.0, tf6,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl7 := label.new(bar_index + 2, 7.0, tf7,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl8 := label.new(bar_index + 2, 8.0, tf8,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl9 := label.new(bar_index + 2, 9.0, tf9,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lbl10 := label.new(bar_index + 2, 10.0, tf10,      style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.white)
+    lblM := label.new(bar_index + 2, 11.0, "Master", style=label.style_label_left, size=size.small, color=C_NONE, textcolor=color.aqua)
+
+// =============================================================================
+// ALERTS
+// =============================================================================
+
+alertcondition(master_bull and not master_bull[1], title="Master Bullish",      message="MTFT: Aligned BULLISH on {{ticker}}")
+alertcondition(master_bear and not master_bear[1], title="Master Bearish",      message="MTFT: Aligned BEARISH on {{ticker}}")
+alertcondition(not master_bull and master_bull[1], title="Master Bullish Lost", message="MTFT: Bullish alignment LOST on {{ticker}}")
+alertcondition(not master_bear and master_bear[1], title="Master Bearish Lost", message="MTFT: Bearish alignment LOST on {{ticker}}")
