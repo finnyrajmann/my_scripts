@@ -1,0 +1,58 @@
+//@version=6
+indicator("Dual Trend Line Signals", overlay=true)
+
+lookback = input.int(15, "Lookback Period (bars)", minval=3)
+
+// ─── Upper line: 15-bar highest high ─────────────────────────────────────────
+upper_now  = ta.highest(high, lookback)
+upper_prev = ta.highest(high[1], lookback)
+
+upper_broke_up   = upper_now > upper_prev
+upper_broke_down = upper_now < upper_prev
+
+var int upper_state = 0
+if upper_broke_up
+    upper_state := 1
+else if upper_broke_down
+    upper_state := -1
+
+var color upper_color = color.gray
+if upper_state == 1
+    upper_color := color.green
+else if upper_state == -1
+    upper_color := color.red
+
+// ─── Lower line: 15-bar lowest low ───────────────────────────────────────────
+lower_now  = ta.lowest(low, lookback)
+lower_prev = ta.lowest(low[1], lookback)
+
+lower_broke_up   = lower_now > lower_prev
+lower_broke_down = lower_now < lower_prev
+
+var int lower_state = 0
+if lower_broke_up
+    lower_state := 1
+else if lower_broke_down
+    lower_state := -1
+
+var color lower_color = color.gray
+if lower_state == 1
+    lower_color := color.aqua
+else if lower_state == -1
+    lower_color := color.orange
+
+// ─── Plot lines ───────────────────────────────────────────────────────────────
+plot(upper_now, "Upper Line (15H)", color=upper_color, linewidth=3, style=plot.style_stepline)
+plot(lower_now, "Lower Line (15L)", color=lower_color, linewidth=3, style=plot.style_stepline)
+
+// ─── Background: only when both lines agree ───────────────────────────────────
+var color bg = na
+if upper_state == 1 and lower_state == 1
+    bg := color.new(color.green, 80)
+else if upper_state == -1 and lower_state == -1
+    bg := color.new(color.red, 80)
+else
+    bg := na
+
+bgcolor(bg, title="Confluence Background")
+
