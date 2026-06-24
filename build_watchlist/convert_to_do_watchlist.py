@@ -44,6 +44,18 @@ BANKING_KEYWORDS = [
     "brokerage", "lending", "credit", "fintech",
 ]
 
+# Healthcare/pharma sectors excluded from all watchlists (ethical exclusion)
+HEALTHCARE_EXCLUDE_KEYWORDS = [
+    "healthcare",
+    "pharmaceutical",
+    "pharma",
+    "biotechnology",
+    "drug",
+    "hospital",
+    "diagnostic",
+    "medical",
+]
+
 # Fallback industry if yfinance returns nothing
 FALLBACK_INDUSTRY = "Unknown"
 
@@ -135,6 +147,16 @@ def is_banking(industry: str) -> bool:
     return any(kw in industry_lower for kw in BANKING_KEYWORDS)
 
 
+# ── IsHealthcare ──────────────────────────────────────────────────────────────
+
+def is_healthcare(industry: str) -> bool:
+    """True if industry string matches healthcare/pharma keywords."""
+    if not industry or industry == FALLBACK_INDUSTRY:
+        return False
+    industry_lower = industry.lower()
+    return any(kw in industry_lower for kw in HEALTHCARE_EXCLUDE_KEYWORDS)
+
+
 # ── Conversion ────────────────────────────────────────────────────────────────
 
 def convert_watchlist(input_file: str, cache: dict) -> str:
@@ -146,7 +168,7 @@ def convert_watchlist(input_file: str, cache: dict) -> str:
                  else os.path.join(SCRIPT_DIR, input_file)
 
     if not os.path.exists(input_path):
-        print(f"⚠️  File not found: {input_path}")
+        print(f"⚠  File not found: {input_path}")
         return None
 
     df = pd.read_csv(input_path)
@@ -169,6 +191,14 @@ def convert_watchlist(input_file: str, cache: dict) -> str:
 
     df_out = pd.DataFrame(rows)
 
+    # Exclude healthcare/pharma symbols
+    healthcare_mask = df_out["Industry"].apply(is_healthcare)
+    excluded_hc = df_out[healthcare_mask]["Symbol"].tolist()
+    if excluded_hc:
+        print(f"   Excluded (healthcare/pharma): {len(excluded_hc)} symbols")
+        print(f"   → {', '.join(excluded_hc)}")
+    df_out = df_out[~healthcare_mask].reset_index(drop=True)
+
     # Output filename: do_watchlist_nifty500.csv etc.
     base     = os.path.splitext(os.path.basename(input_file))[0]
     out_name = f"do_{base}.csv"
@@ -182,6 +212,7 @@ def convert_watchlist(input_file: str, cache: dict) -> str:
     print(f"   Total symbols : {len(df_out)}")
     print(f"   IsBanking=True: {banking_count}")
     print(f"   Unknown industry: {unknown_count}")
+    print(f"   Healthcare excluded: {len(excluded_hc)}")
 
     return out_path
 
@@ -228,6 +259,8 @@ def main():
     for out in outputs:
         df_check = pd.read_csv(out)
         banking = df_check["IsBanking"].sum()
+        hc_excluded = sum(1 for s in pd.read_csv(out.replace("do_", ""))["Symbol"]
+                         if False)  # excluded already, just note count
         print(f"  {os.path.basename(out):<35} "
               f"{len(df_check)} symbols  |  {banking} banking")
 

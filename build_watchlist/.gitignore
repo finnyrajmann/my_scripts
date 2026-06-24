@@ -1,0 +1,18 @@
+
+# ── DO Watchlist outputs (contain industry data, rebuilt locally) ──
+do_watchlist_*.csv
+ 
+# ── Industry cache (rebuilt from yfinance, can be large) ──
+industry_cache.json
+ 
+# ── NSE Market Watch raw downloads ──
+MW-*.csv
+ 
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+myenv/
+ 
